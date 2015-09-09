@@ -3,11 +3,15 @@
 namespace Ups;
 
 use DOMDocument;
+use DOMNode;
 use Exception;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use SimpleXMLElement;
 use stdClass;
+use Ups\Entity\LabelSpecification;
+use Ups\Entity\Package;
+use Ups\Entity\Shipment;
 use Ups\Entity\ShipmentRequestLabelSpecification;
 use Ups\Entity\ShipmentRequestReceiptSpecification;
 
@@ -98,7 +102,7 @@ class Shipping extends Ups
      * Creates a ShipConfirm request.
      *
      * @param string $validation
-     * @param stdClass $shipment
+     * @param Shipment $shipment
      * @param ShipmentRequestLabelSpecification|null $labelSpec
      * @param ShipmentRequestReceiptSpecification|null $receiptSpec
      *
@@ -106,7 +110,7 @@ class Shipping extends Ups
      */
     private function createConfirmRequest(
         $validation,
-        $shipment,
+        Shipment $shipment,
         ShipmentRequestLabelSpecification $labelSpec = null,
         ShipmentRequestReceiptSpecification $receiptSpec = null
     ) {
@@ -345,55 +349,7 @@ class Shipping extends Ups
         }
 
         foreach ($shipment->getPackages() as &$package) {
-            $node = $shipmentNode->appendChild($xml->createElement('Package'));
-
-            if (isset($package->Description)) {
-                $node->appendChild($xml->createElement('Description', $package->Description));
-            }
-
-            $ptNode = $node->appendChild($xml->createElement('PackagingType'));
-            $ptNode->appendChild($xml->createElement('Code', $package->PackagingType->Code));
-
-            if (isset($package->PackagingType->Description)) {
-                $ptNode->appendChild($xml->createElement('Description', $package->PackagingType->Description));
-            }
-
-            $pwNode = $node->appendChild($xml->createElement('PackageWeight'));
-            $umNode = $pwNode->appendChild($xml->createElement('UnitOfMeasurement'));
-
-            if (isset($package->PackageWeight->UnitOfMeasurement->Code)) {
-                $umNode->appendChild($xml->createElement('Code', $package->PackageWeight->UnitOfMeasurement->Code));
-            }
-
-            if (isset($package->PackageWeight->UnitOfMeasurement->Description)) {
-                $umNode->appendChild($xml->createElement('Description', $package->PackageWeight->UnitOfMeasurement->Description));
-            }
-
-            $dimensions = $package->getDimensions();
-            if (isset($dimensions)) {
-                $node->appendChild($dimensions->toNode($xml));
-            }
-
-            $pwNode->appendChild($xml->createElement('Weight', $package->PackageWeight->Weight));
-
-            if (isset($package->LargePackageIndicator)) {
-                $node->appendChild($xml->createElement('LargePackageIndicator'));
-            }
-
-            if (isset($package->ReferenceNumber) && isset($package->ReferenceNumber->Code) && isset($package->ReferenceNumber->Value)) {
-                $refNode = $node->appendChild($xml->createElement('ReferenceNumber'));
-
-                if ($package->ReferenceNumber->BarCodeIndicator) {
-                    $refNode->appendChild($xml->createElement('BarCodeIndicator', $package->ReferenceNumber->BarCodeIndicator));
-                }
-
-                $refNode->appendChild($xml->createElement('Code', $package->ReferenceNumber->Code));
-                $refNode->appendChild($xml->createElement('Value', $package->ReferenceNumber->Value));
-            }
-
-            if (isset($package->AdditionalHandling)) {
-                $refNode->appendChild($xml->createElement('AdditionalHandling'));
-            }
+            $container->appendChild($xml->importNode($package->toNode($xml), true));
         }
 
         $shipmentServiceOptions = $shipment->getShipmentServiceOptions();
@@ -407,43 +363,7 @@ class Shipping extends Ups
         }
 
         if ($labelSpec) {
-            $labelSpecNode = $container->appendChild($xml->createElement('LabelSpecification'));
-
-            $printMethodNode = $labelSpecNode->appendChild($xml->createElement('LabelPrintMethod'));
-            $printMethodNode->appendChild($xml->createElement('Code', $labelSpec->getPrintMethodCode()));
-
-            if ($labelSpec->getPrintMethodDescription()) {
-                $printMethodNode->appendChild($xml->createElement('Description', $labelSpec->getPrintMethodDescription()));
-            }
-
-            if ($labelSpec->getHttpUserAgent()) {
-                $labelSpecNode->appendChild($xml->createElement('HTTPUserAgent', $labelSpec->getHttpUserAgent()));
-            }
-
-            //Label print method is required only for GIF label formats
-            if ($labelSpec->getPrintMethodCode() == ShipmentRequestLabelSpecification::IMG_FORMAT_CODE_GIF) {
-                $imageFormatNode = $labelSpecNode->appendChild($xml->createElement('LabelImageFormat'));
-                $imageFormatNode->appendChild($xml->createElement('Code', $labelSpec->getImageFormatCode()));
-
-                if ($labelSpec->getImageFormatDescription()) {
-                    $imageFormatNode->appendChild($xml->createElement('Description', $labelSpec->getImageFormatDescription()));
-                }
-            } else {
-                //Label stock size is required only for non-GIF label formats
-                $stockSizeNode = $labelSpecNode->appendChild($xml->createElement('LabelStockSize'));
-
-                $stockSizeNode->appendChild($xml->createElement('Height', $labelSpec->getStockSizeHeight()));
-                $stockSizeNode->appendChild($xml->createElement('Width', $labelSpec->getStockSizeWidth()));
-            }
-
-            if (isset($labelSpec->Instruction)) {
-                $instructionNode = $labelSpecNode->appendChild($xml->createElement('Instruction'));
-                $instructionNode->appendChild($xml->createElement('Code', $labelSpec->getInstructionCode()));
-
-                if ($labelSpec->Instruction->Description) {
-                    $instructionNode->appendChild($xml->createElement('Description', $labelSpec->getInstructionDescription()));
-                }
-            }
+            $container->appendChild($xml->importNode($this->compileLabelSpecificationNode($labelSpec), true));
         }
 
         $shipmentIndicationType = $shipment->getShipmentIndicationType();
@@ -452,13 +372,7 @@ class Shipping extends Ups
         }
 
         if ($receiptSpec) {
-            $receiptSpecNode = $container->appendChild($xml->createElement('ReceiptSpecification'));
-            $imageFormatNode = $receiptSpecNode->appendChild($xml->createElement('ImageFormat'));
-            $imageFormatNode->appendChild($xml->createElement('Code', $receiptSpec->getImageFormatCode()));
-
-            if ($receiptSpec->getImageFormatDescription()) {
-                $imageFormatNode->appendChild($xml->createElement('Description', $receiptSpec->getImageFormatDescription()));
-            }
+            $container->appendChild($xml->importNode($this->compileReceiptSpecificationNode($receiptSpec), true));
         }
 
         return $xml->saveXML();
@@ -786,5 +700,76 @@ class Shipping extends Ups
         $this->response = $response;
 
         return $this;
+    }
+
+    /**
+     * @param ShipmentRequestReceiptSpecification $receiptSpec
+     * @return DOMNode
+     */
+    private function compileReceiptSpecificationNode(ShipmentRequestReceiptSpecification $receiptSpec)
+    {
+        $xml = new DOMDocument();
+        $xml->formatOutput = true;
+
+        $receiptSpecNode = $xml->appendChild($xml->createElement('ReceiptSpecification'));
+
+        $imageFormatNode = $receiptSpecNode->appendChild($xml->createElement('ImageFormat'));
+        $imageFormatNode->appendChild($xml->createElement('Code', $receiptSpec->getImageFormatCode()));
+
+        if ($receiptSpec->getImageFormatDescription()) {
+            $imageFormatNode->appendChild($xml->createElement('Description', $receiptSpec->getImageFormatDescription()));
+        }
+
+        return $receiptSpecNode->cloneNode(true);
+    }
+
+    /**
+     * @param ShipmentRequestLabelSpecification $labelSpec
+     * @return DOMNode
+     */
+    private function compileLabelSpecificationNode(ShipmentRequestLabelSpecification $labelSpec)
+    {
+        $xml = new DOMDocument();
+        $xml->formatOutput = true;
+
+        $labelSpecNode = $xml->appendChild($xml->createElement('LabelSpecification'));
+
+        $printMethodNode = $labelSpecNode->appendChild($xml->createElement('LabelPrintMethod'));
+        $printMethodNode->appendChild($xml->createElement('Code', $labelSpec->getPrintMethodCode()));
+
+        if ($labelSpec->getPrintMethodDescription()) {
+            $printMethodNode->appendChild($xml->createElement('Description', $labelSpec->getPrintMethodDescription()));
+        }
+
+        if ($labelSpec->getHttpUserAgent()) {
+            $labelSpecNode->appendChild($xml->createElement('HTTPUserAgent', $labelSpec->getHttpUserAgent()));
+        }
+
+        //Label print method is required only for GIF label formats
+        if ($labelSpec->getPrintMethodCode() == ShipmentRequestLabelSpecification::IMG_FORMAT_CODE_GIF) {
+            $imageFormatNode = $labelSpecNode->appendChild($xml->createElement('LabelImageFormat'));
+            $imageFormatNode->appendChild($xml->createElement('Code', $labelSpec->getImageFormatCode()));
+
+            if ($labelSpec->getImageFormatDescription()) {
+                $imageFormatNode->appendChild($xml->createElement('Description', $labelSpec->getImageFormatDescription()));
+            }
+        } else {
+            //Label stock size is required only for non-GIF label formats
+            $stockSizeNode = $labelSpecNode->appendChild($xml->createElement('LabelStockSize'));
+
+            $stockSizeNode->appendChild($xml->createElement('Height', $labelSpec->getStockSizeHeight()));
+            $stockSizeNode->appendChild($xml->createElement('Width', $labelSpec->getStockSizeWidth()));
+        }
+
+        if ($labelSpec->getInstructionCode()) {
+            $instructionNode = $labelSpecNode->appendChild($xml->createElement('Instruction'));
+            $instructionNode->appendChild($xml->createElement('Code', $labelSpec->getInstructionCode()));
+
+            if ($labelSpec->getInstructionDescription()) {
+                $instructionNode->appendChild($xml->createElement('Description', $labelSpec->getInstructionDescription()));
+            }
+        }
+
+        return $labelSpecNode->cloneNode(true);
     }
 }

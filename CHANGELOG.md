@@ -1,7 +1,8 @@
 # CHANGELOG
 
-## 0.5.1 (upcoming release)
-
+## 1.0.0 (released 09-09-2015)
+- Added ShipmentRequestLabelSpecification class for easier options setting
+- Added ShipmentRequestReceiptSpecification class for easier options setting
 
 ## 0.5.0 (released 26-08-2015)
 
