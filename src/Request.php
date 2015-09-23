@@ -100,7 +100,7 @@ class Request implements RequestInterface, LoggerAwareInterface
                         'Content-type' => 'application/x-www-form-urlencoded; charset=utf-8',
                         'Accept-Charset' => 'UTF-8',
                     ],
-                    'http_errors' => true,
+                    'exceptions' => true,
                 ]
             );
 

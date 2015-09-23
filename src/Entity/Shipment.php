@@ -102,7 +102,6 @@ class Shipment
     public function __construct()
     {
         $this->setShipper(new Shipper());
-        $this->setShipFrom(new ShipFrom());
         $this->setShipTo(new ShipTo());
         $this->setShipmentServiceOptions(new ShipmentServiceOptions());
         $this->setService(new Service());
@@ -288,7 +287,7 @@ class Shipment
      *
      * @return Shipment
      */
-    public function setShipFrom(ShipFrom $shipFrom)
+    public function setShipFrom(ShipFrom $shipFrom = null)
     {
         $this->shipFrom = $shipFrom;
 
